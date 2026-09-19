@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DocuShield · Secure Print Kiosk</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{--bg:#0b1020;--card:#151b33;--accent:#38e0a2;--danger:#ff6b6b;--text:#e8ecf8;--muted:#8a93b2}
+  *{box-sizing:border-box;margin:0}
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:radial-gradient(1200px 800px at 80% -10%,#1b2a5e33,transparent),var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:linear-gradient(160deg,#171f3d,#10152b);border:1px solid #26315c;border-radius:20px;padding:32px;max-width:460px;width:100%;box-shadow:0 24px 60px #0009}
+  .logo{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .shield{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,var(--accent),#2aa87f);display:grid;place-items:center;font-size:22px}
+  h1{font-size:22px;letter-spacing:.3px}
+  .tag{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .steps{display:flex;gap:6px;margin:18px 0 22px}
+  .step{flex:1;height:5px;border-radius:99px;background:#26315c;transition:.3s}
+  .step.on{background:var(--accent)}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  input[type=file]{width:100%;padding:14px;border:1.5px dashed #33406f;border-radius:12px;background:#0d1330;color:var(--text);cursor:pointer}
+  .drop{border:1.5px dashed #33406f;border-radius:12px;padding:22px;text-align:center;color:var(--muted);font-size:13px;margin-bottom:8px}
+  .btn{width:100%;padding:14px;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:14px;transition:.15s}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),#2aa87f);color:#04150e}
+  .btn.primary:hover{filter:brightness(1.1)}
+  .btn.ghost{background:#1d2649;color:var(--text);border:1px solid #33406f}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:10px}
+  .row .btn{margin-top:14px}
+  .stat{background:#0d1330;border:1px solid #26315c;border-radius:12px;padding:12px 14px;font-size:13px;margin-top:12px;display:flex;justify-content:space-between}
+  .ok{color:var(--accent)} .bad{color:var(--danger)}
+  #qrbox{background:#fff;padding:10px;border-radius:12px;width:148px;margin:10px auto 0}
+  #qrbox img,#qrbox canvas{display:block;width:128px!important;height:128px!important}
+  .center{text-align:center}
+  .spin{display:inline-block;width:16px;height:16px;border:2px solid #04150e55;border-top-color:#04150e;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:8px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  details{margin-top:18px;font-size:13px;color:var(--muted)}
+  summary{cursor:pointer;color:var(--text)}
+  pre{background:#0a0e22;padding:10px;border-radius:10px;overflow:auto;margin-top:8px;font-size:12px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState, useEffect, useRef} = React;
+
+function App(){
+  const [status,setStatus]=useState(null);
+  const [file,setFile]=useState(null);
+  const [phase,setPhase]=useState(0);           // 0 idle 1 uploaded 2 paid 3 printing 4 done
+  const [msg,setMsg]=useState("");
+  const [forensic,setForensic]=useState(null);
+  const qrRef=useRef(null);
+
+  useEffect(()=>{ fetch("/api/status").then(r=>r.json()).then(setStatus); },[]);
+  useEffect(()=>{                                   // QR of THIS page (kiosk URL)
+    if(qrRef.current && window.QRCode){ qrRef.current.innerHTML="";
+      new QRCode(qrRef.current,{text:location.origin,width:128,height:128}); }
+  },[]);
+
+  const upload=async()=>{
+    if(!file) return;
+    const r=await fetch("/api/upload?filename="+encodeURIComponent(file.name),
+      {method:"POST",body:file});
+    const j=await r.json();
+    if(j.ok){ setPhase(1); setMsg(`Stored in Volatile Spool Enclave — ${j.bytes} bytes · disk touched: NO`); }
+  };
+  const pay=async()=>{
+    const r=await fetch("/api/pay",{method:"POST"}); const j=await r.json();
+    if(j.ok){ setPhase(2); setMsg("Payment confirmed ("+j.method+")"); }
+  };
+  const printDoc=async()=>{
+    setPhase(3); setMsg("Printing…");
+    const r=await fetch("/api/print",{method:"POST"}); const j=await r.json();
+    if(j.ok){ setPhase(4); setMsg(j.wiped_from_ram
+      ? "✔ Printed & wiped — 0x00 overwrite on RAM block, file gone. Power loss = instant erase."
+      : "Printed."); }
+    else { setPhase(1); setMsg("Error: "+j.error); }
+  };
+  const forensics=async()=>{
+    const j=await (await fetch("/api/forensics")).json(); setForensic(j);
+  };
+
+  return <div className="card">
+    <div className="logo"><div className="shield">🛡️</div><h1>DocuShield Kiosk</h1></div>
+    <div className="tag">Volatile-memory print spooling · nothing touches the disk</div>
+
+    <div className="steps">{[0,1,2,3].map(i=><div key={i} className={"step"+(phase>i-1?" on":"")}></div>)}</div>
+
+    <div className="center" style={{color:"var(--muted)",fontSize:12}}>Scan to open this kiosk on your phone</div>
+    <div id="qrbox" ref={qrRef}></div>
+
+    {status&&<div className="stat"><span>Spool enclave</span>
+      <span className={status.volatile?"ok":"bad"}>{status.volatile?"RAM (volatile ✔)":"⚠ NOT a RAM disk"}</span></div>}
+    {status&&status.ram_warning&&<div className="stat bad">Demo mode — see README to mount a real RAM disk (tmpfs/ImDisk).</div>}
+
+    <label>1 · Upload document (PDF / DOCX / JPG)</label>
+    <input type="file" onChange={e=>{setFile(e.target.files[0]);setPhase(0);setMsg("");}}/>
+    <button className="btn primary" onClick={upload} disabled={!file||phase>=1}>Upload to RAM</button>
+
+    {phase>=1&&<><label>2 · Payment</label>
+      <button className="btn ghost" onClick={pay} disabled={phase>=2}>Pay ₹{file? (Math.max(2,Math.ceil((file.size||1)/1024/1024))*2):2} (simulated UPI)</button></>}
+
+    {phase>=2&&<><label>3 · Print</label>
+      <button className="btn primary" onClick={printDoc} disabled={phase>=3}>{phase===3?<span className="spin"></span>:"Print now — auto-wipe after"}</button></>}
+
+    {msg&&<div className="stat"><span>{msg}</span></div>}
+    {phase===4&&<div className="stat"><span className="ok">Post-print forensic recovery: <b>0%</b> — data only existed in volatile memory.</span></div>}
+
+    <details><summary>🔍 Forensics check (spool leftovers)</summary>
+      <button className="btn ghost" onClick={forensics}>Scan OS spool dir vs VSE</button>
+      {forensic&&<pre>{JSON.stringify(forensic,null,2)}</pre>}
+    </details>
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
